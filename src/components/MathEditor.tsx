@@ -1,126 +1,132 @@
 "use client";
-import { useState, useRef } from "react";
-import "katex/dist/katex.min.css";
+
+import { useEffect, useRef, useState } from "react";
+import { MathfieldElement } from "mathlive";
 import katex from "katex";
+import { toPng } from "html-to-image";
 
-const MathEditor = () => {
-  const [expression, setExpression] = useState("E=mc^3");
-  const [htmlOutput, setHtmlOutput] = useState("");
-  const [copySuccess, setCopySuccess] = useState("");
-  const htmlRef = useRef(null);
+// Teach TypeScript about the <math-field> custom element
+declare module "react" {
+  namespace JSX {
+    interface IntrinsicElements {
+      "math-field": React.DetailedHTMLProps<
+        React.HTMLAttributes<MathfieldElement>,
+        MathfieldElement
+      >;
+    }
+  }
+}
 
-  const convertToHTML = () => {
-    try {
-      const formattedExpression = expression.trim();
-      const fullHtml = katex.renderToString(formattedExpression, {
-        throwOnError: false,
-      });
+export default function MathEditor() {
+  const mathfieldRef = useRef<MathfieldElement>(null);
+  const renderRef = useRef<HTMLDivElement>(null);
+  const [latex, setLatex] = useState("");
 
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(fullHtml, "text/html");
-      const mathML = doc.querySelector("math");
+  useEffect(() => {
+    if (!customElements.get("math-field")) {
+      customElements.define("math-field", MathfieldElement);
+    }
 
-      setHtmlOutput(
-        mathML
-          ? mathML.outerHTML
-          : "<span style='color: red;'>Invalid Expression</span>"
-      );
-      setCopySuccess("");
-    } catch (error: unknown) {
-      console.log({ error });
-      setHtmlOutput('<span style="color: red;">Invalid Expression</span>');
+    setTimeout(() => {
+      if (mathfieldRef.current) {
+        mathfieldRef.current.setValue("\\placeholder{}");
+        mathfieldRef.current.executeCommand("showVirtualKeyboard");
+      }
+    }, 300);
+  }, []);
+
+  useEffect(() => {
+    // Remove the fallback text KaTeX renders so only MathML remains
+    if (renderRef.current) {
+      const fallback = renderRef.current.querySelector(".katex-html");
+      if (fallback) fallback.remove();
+    }
+  }, [latex]);
+
+  const handleSave = () => {
+    const mf = mathfieldRef.current;
+    if (mf) {
+      const value = mf.getValue(); // LaTeX
+      setLatex(value);
     }
   };
 
-  const copyToClipboard = () => {
-    if (!htmlRef.current || !htmlOutput) return;
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert("✅ LaTeX copied to clipboard!");
+  };
 
-    const textarea = document.createElement("textarea");
-    textarea.value = htmlOutput;
-    document.body.appendChild(textarea);
+  const copyAsImage = async () => {
+    if (!renderRef.current) return;
 
-    textarea.select();
-    document.execCommand("copy");
-    document.body.removeChild(textarea);
-
-    setCopySuccess("Copied to clipboard! ✅");
+    try {
+      const dataUrl = await toPng(renderRef.current);
+      const blob = await fetch(dataUrl).then((res) => res.blob());
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      alert("🖼️ Equation image copied to clipboard!");
+    } catch (err) {
+      console.error("Failed to copy image", err);
+      alert("❌ Could not copy image");
+    }
   };
 
   return (
-    <div style={{ padding: "20px", maxWidth: "600px", margin: "auto" }}>
-      <h2>Math to HTML Converter</h2>
-
-      {/* LaTeX Expression Input */}
-      <textarea
-        rows={4}
+    <div>
+      <math-field
+        ref={mathfieldRef}
+        virtual-keyboard-mode="onfocus"
+        virtual-keyboard-theme="material"
+        virtual-keyboard-toolbar="true"
         style={{
+          fontSize: "1.2rem",
+          border: "1px solid #ccc",
+          padding: "1rem",
           width: "100%",
-          padding: "10px",
-          fontSize: "16px",
-          borderRadius: "5px",
-          marginBottom: "10px",
+          minHeight: "80px",
         }}
-        value={expression}
-        onChange={(e) => setExpression(e.target.value)}
-        placeholder="Enter LaTeX expression (e.g., E=mc^3)"
-      />
-      <button
-        onClick={convertToHTML}
-        style={{
-          marginTop: "10px",
-          padding: "10px",
-          fontSize: "16px",
-          cursor: "pointer",
-        }}
-      >
-        Convert to HTML
+      ></math-field>
+
+      <button style={{ marginTop: "10px" }} onClick={handleSave}>
+        Convert &amp; Copy Options
       </button>
 
-      {/* Display Generated HTML Output */}
-      <h3>Generated HTML:</h3>
-      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-        <textarea
-          rows={6}
-          ref={htmlRef}
-          readOnly
-          style={{
-            width: "100%",
-            padding: "10px",
-            fontSize: "16px",
-            borderRadius: "5px",
-            backgroundColor: "#f4f4f4",
-          }}
-          value={htmlOutput}
-        />
-        <button
-          onClick={copyToClipboard}
-          style={{
-            padding: "10px",
-            fontSize: "16px",
-            cursor: "pointer",
-          }}
-        >
-          📋 Copy HTML
-        </button>
-      </div>
+      {latex && (
+        <div style={{ marginTop: "20px" }}>
+          <div>
+            <strong>LaTeX Code:</strong>
+            <pre>{latex}</pre>
+            <button onClick={() => copyToClipboard(latex)}>
+              📋 Copy LaTeX
+            </button>
+          </div>
 
-      {copySuccess && <p style={{ color: "green" }}>{copySuccess}</p>}
-
-      {/* Rendered LaTeX Preview (Real-time rendering) */}
-      <h3>Preview:</h3>
-      <div
-        style={{
-          padding: "10px",
-          border: "1px solid #ccc",
-          minHeight: "50px",
-          fontSize: "18px",
-          backgroundColor: "#f9f9f9",
-          borderRadius: "5px",
-        }}
-        dangerouslySetInnerHTML={{ __html: htmlOutput }}
-      />
+          <div style={{ marginTop: "15px" }}>
+            <strong>Rendered Equation:</strong>
+            <div
+              ref={renderRef}
+              dangerouslySetInnerHTML={{
+                __html: katex.renderToString(latex, {
+                  throwOnError: false,
+                  displayMode: true,
+                }),
+              }}
+              style={{
+                padding: "10px",
+                fontSize: "1.5rem",
+                backgroundColor: "#fff",
+                display: "inline-block",
+                whiteSpace: "nowrap",
+              }}
+              className="katex-container"
+            />
+            <div style={{ marginTop: "10px" }}>
+              <button onClick={copyAsImage}>🖼️ Copy Equation as Image</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-export default MathEditor;
+}
