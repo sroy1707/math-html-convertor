@@ -1,10 +1,18 @@
 {
-  "name": "math-editor-app",
+  "name": "equawrite",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:package": "tsup src/index.ts --format cjs,esm --dts --external react,react-dom --tsconfig tsconfig.package.json",
+    "prepublishOnly": "npm run build:package",
     "start": "next start",
     "lint": "next lint"
   },
@@ -21,6 +29,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.2.4",
+    "tsup": "^8.5.1",
     "typescript": "^5"
   }
 }

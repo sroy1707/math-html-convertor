@@ -15,6 +15,200 @@ import {
 } from "./EditorHelpers";
 import EditorToolbar from "./EditorToolbar";
 
+const EDITOR_STYLES = `
+/* Native MathML Styles */
+math {
+  font-family: Cambria Math, Latin Modern Math, STIX Two Math, Times New Roman, serif;
+  font-size: 1.15em;
+  line-height: normal;
+  vertical-align: middle;
+}
+
+.large-op {
+  font-size: 1.45em;
+  padding-right: 0.1em;
+}
+
+/* Display (block) equation paragraph - centered on its own line */
+.math-eq-display {
+  text-align: center !important;
+  margin: 0.5em 0 !important;
+}
+
+.math-eq-display .math-eq-container {
+  font-size: 1.15em;
+}
+
+/* Math Equation Editable Element */
+.math-eq-container {
+  position: relative;
+  display: inline;
+  cursor: pointer;
+  user-select: none;
+}
+
+.math-eq-container math {
+  vertical-align: middle;
+}
+
+/* Equation LaTeX Tooltip */
+.math-eq-container::after {
+  content: "Formula: " attr(data-latex);
+  position: absolute;
+  bottom: 130%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.725rem;
+  font-family: Consolas, monospace;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+  background-color: #0f172a;
+  color: #ffffff;
+  z-index: 9999;
+}
+
+.math-eq-container:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}
+
+/* Math Placeholder style */
+.math-placeholder {
+  color: #94a3b8;
+  font-weight: normal;
+  font-family: inherit;
+  opacity: 0.6;
+  padding: 0 2px;
+  display: inline-block;
+}
+
+/* Rich Text Formatting Defaults Inside ContentEditable */
+[contenteditable="true"] h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+[contenteditable="true"] h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+[contenteditable="true"] h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  color: #334155;
+  line-height: 1.35;
+}
+
+[contenteditable="true"] p {
+  margin-bottom: 1em;
+  font-size: 1rem;
+  color: #334155;
+}
+
+[contenteditable="true"] ul {
+  list-style-type: disc !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+  margin-bottom: 1em;
+}
+
+[contenteditable="true"] ul ul {
+  list-style-type: circle !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+
+[contenteditable="true"] ul ul ul {
+  list-style-type: square !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+}
+
+[contenteditable="true"] ol {
+  list-style-type: decimal !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+  margin-bottom: 1em;
+}
+
+[contenteditable="true"] ol ol {
+  list-style-type: lower-alpha !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+
+[contenteditable="true"] ol ol ol {
+  list-style-type: lower-roman !important;
+  list-style-position: outside !important;
+  padding-left: 24px !important;
+}
+
+[contenteditable="true"] li {
+  margin-bottom: 0.25em;
+}
+
+[contenteditable="true"] blockquote {
+  border-left: 4px solid #3b82f6;
+  padding-left: 16px;
+  margin: 1.5em 0;
+  color: #475569;
+  font-style: italic;
+}
+
+[contenteditable="true"] pre {
+  background-color: #f1f5f9;
+  padding: 14px 18px;
+  border-radius: 8px;
+  font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+  font-size: 0.9rem;
+  overflow-x: auto;
+  margin: 1.5em 0;
+  border: 1px solid #e2e8f0;
+}
+
+[contenteditable="true"] code {
+  background-color: #f1f5f9;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 0.9em;
+  color: #ef4444;
+}
+
+[contenteditable="true"] sup,
+sup {
+  vertical-align: super !important;
+  font-size: 0.75em !important;
+  line-height: 0 !important;
+}
+
+[contenteditable="true"] sub,
+sub {
+  vertical-align: sub !important;
+  font-size: 0.75em !important;
+  line-height: 0 !important;
+}
+`;
+
 interface RichTextEditorProps {
   initialContent: string;
   onContentChange: (html: string, cleanLatexHtml: string) => void;
@@ -68,6 +262,16 @@ export default function RichTextEditor({
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Dynamically inject self-contained editor styles into document head on mount
+  useEffect(() => {
+    if (typeof document !== "undefined" && !document.getElementById("equawrite-styles")) {
+      const style = document.createElement("style");
+      style.id = "equawrite-styles";
+      style.innerHTML = EDITOR_STYLES;
+      document.head.appendChild(style);
+    }
   }, []);
 
   const isMobile = windowWidth < 768;

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "plugins": []
+  },
+  "exclude": [
+    "node_modules",
+    "src/app"
+  ]
+}
