@@ -508,10 +508,6 @@ function clipboardMathToLatexText(html: string, plainText: string = ""): string 
   };
 
   const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      out.push(node.textContent ?? "");
-      return;
-    }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as Element;
 
