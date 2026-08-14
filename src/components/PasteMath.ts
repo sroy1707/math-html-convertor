@@ -477,7 +477,7 @@ const BLOCK_TAGS = new Set([
   "table", "ul", "ol", "section", "header", "footer", "article",
 ]);
 
-function clipboardMathToLatexText(html: string, plainText: string = ""): string | null {
+function clipboardMathToLatexText(html: string, _plainText: string = ""): string | null {
   let doc: Document;
   try {
     doc = new DOMParser().parseFromString(html, "text/html");
@@ -508,7 +508,21 @@ function clipboardMathToLatexText(html: string, plainText: string = ""): string 
   };
 
   const walk = (node: Node) => {
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      if (isNodeMathLike(node)) {
+        const latexPart = renderNodeContentToLatex(node);
+        if (latexPart) {
+          currentMathRun.push(latexPart);
+        }
+      } else {
+        finalizeMathRun();
+        if (node.nodeType === Node.TEXT_NODE) {
+          out.push(node.textContent ?? "");
+        }
+      }
+      return;
+    }
+
     const el = node as Element;
 
     // Check class names to skip duplicate visual containers (KaTeX/MathJax HTML)
@@ -571,12 +585,10 @@ function clipboardMathToLatexText(html: string, plainText: string = ""): string 
     } else {
       // If not math-like, finalize current math run
       finalizeMathRun();
-      // If it's a text node, add its content as plain text
-      if (node.nodeType === Node.TEXT_NODE) {
-        out.push(node.textContent ?? "");
-      }
-      // If it's an element, recursively walk its children
-      else if (node.nodeType === Node.ELEMENT_NODE) {
+      // Since it's not math-like, and we've already handled non-element nodes
+      // at the top of the walk function, we can assume this is an element
+      // whose children should be walked.
+      if (node.nodeType === Node.ELEMENT_NODE) {
         for (const child of Array.from(node.childNodes)) {
           walk(child);
         }
