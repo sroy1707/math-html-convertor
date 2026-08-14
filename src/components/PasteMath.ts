@@ -477,7 +477,7 @@ const BLOCK_TAGS = new Set([
   "table", "ul", "ol", "section", "header", "footer", "article",
 ]);
 
-function clipboardMathToLatexText(html: string, _plainText: string = ""): string | null {
+function clipboardMathToLatexText(html: string, plainText: string = ""): string | null {
   let doc: Document;
   try {
     doc = new DOMParser().parseFromString(html, "text/html");
@@ -542,7 +542,11 @@ function clipboardMathToLatexText(html: string, _plainText: string = ""): string
     // If it's a MathML or OMML element, treat it as a complete math block
     if (node.nodeType === Node.ELEMENT_NODE && isMathElement(node as Element)) {
       finalizeMathRun(); // Finalize any preceding math run
-      const latex = mathElementToLatex(node as Element);
+      let latex = mathElementToLatex(node as Element);
+      if (!latex && plainText) {
+        // Fallback for things like Google Docs images where latex is in alt text
+        latex = plainText;
+      }
       if (latex) { // MathML/OMML is usually a complete expression
         out.push(`{{${latex.trim()}}}`);
         foundMath = true;
