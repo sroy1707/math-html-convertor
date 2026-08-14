@@ -299,3 +299,4 @@ export function latexToMathML(latex: string): string {
     return `<span style="color:red; font-size: 0.9em;">Syntax Error</span>`;
   }
 }
+

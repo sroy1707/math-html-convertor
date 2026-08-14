@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import EquationEditorModal from "./EquationEditorModal";
 import EquationOcrModal from "./EquationOcrModal";
 import { latexToMathML } from "./MathParser";
+import { clipboardMathToLatexText, convertMathMLToLatex } from "./PasteMath";
+import { autoDetectMathInText } from "./MathDetector";
 import LinkModal from "./LinkModal";
 
 import {
@@ -589,14 +591,73 @@ export default function RichTextEditor({
 
   // Handle paste to intercept and process {{latex}} notation
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    // Math copied from Google Docs (MathML) or Microsoft Word (OMML)
+    // arrives in the "text/html" clipboard payload. Convert it to
+    // {{latex}} blocks and reuse the same rendering pipeline.
+    const html = e.clipboardData.getData("text/html");
     const plainText = e.clipboardData.getData("text/plain");
-
-    // Only intercept if the pasted text contains {{...}} patterns
-    if (/\{\{[\s\S]*?\}\}/.test(plainText)) {
+    const allTypes = Array.from(e.clipboardData.types);
+    
+    console.group("=== PASTE DEBUG ===");
+    console.log("All MIME types:", allTypes);
+    console.log("Plain text:", plainText);
+    
+    if (html) { 
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const imgs = doc.querySelectorAll("img");
+        const mathEls = doc.querySelectorAll("math");
+        const spans = doc.querySelectorAll("span");
+        let cambriaMathSpans = 0;
+        spans.forEach(s => { if (/cambria\s*math/i.test(s.getAttribute("style") || "")) cambriaMathSpans++; });
+        console.log("img elements:", imgs.length);
+        imgs.forEach((img, i) => {
+          console.log(`  img[${i}]: src=${img.src.slice(0, 80)}, alt="${img.alt}", class="${img.className}"`);
+        });
+        console.log("<math> elements:", mathEls.length);
+        console.log("Cambria Math spans:", cambriaMathSpans);
+        console.log("HTML (first 1500 chars):", html.slice(0, 1500));
+      } catch (err) {
+        console.error("Parse error:", err);
+      }
+      
+      const mathText = clipboardMathToLatexText(html, plainText);
+      console.log("clipboardMathToLatexText result:", mathText);
+      console.groupEnd();
+      
+      if (mathText !== null) {
+        e.preventDefault();
+        const parsed = parsePastedLatexText(mathText);
+        restoreSelection();
+        document.execCommand("insertHTML", false, parsed);
+        updateStatsAndHTML();
+        if (editorRef.current) editorRef.current.focus();
+        return;
+      }
+    } else {
+      console.log("No HTML payload in clipboard.");
+      console.groupEnd();
+    }
+    
+    // Fallback for plain text: check for raw MathML or {{latex}} patterns
+    const mathmlLatex = convertMathMLToLatex(plainText);
+    if (mathmlLatex) {
       e.preventDefault();
-      const html = parsePastedLatexText(plainText);
-      // execCommand("insertHTML") reliably inserts block-level <p>
-      // elements at the caret without creating invalid nesting.
+      const parsed = parsePastedLatexText(`{{${mathmlLatex}}}`);
+      restoreSelection();
+      document.execCommand("insertHTML", false, parsed);
+      updateStatsAndHTML();
+      if (editorRef.current) editorRef.current.focus();
+      return;
+    }
+    
+    const preprocessedText = autoDetectMathInText(plainText);
+    
+    // Only intercept if the pasted plain text contains {{...}} patterns
+    if (/\{\{[\s\S]*?\}\}/.test(preprocessedText)) {
+      e.preventDefault();
+      const html = parsePastedLatexText(preprocessedText);
       restoreSelection();
       document.execCommand("insertHTML", false, html);
       updateStatsAndHTML();
