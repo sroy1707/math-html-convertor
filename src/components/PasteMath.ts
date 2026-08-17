@@ -1,5 +1,5 @@
 import { MathMLToLaTeX } from "mathml-to-latex";
-import { isMathExpressionText } from "./MathDetector";
+import { isMathExpressionText, autoDetectMathInText, containsProseWords } from "./MathDetector";
 
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math";
@@ -33,7 +33,7 @@ function isOml(el: Element): boolean {
   return ln === "omath" || ln === "omathpara";
 }
 
-function isEquationElement(el: Element): boolean {
+function _isEquationElement(el: Element): boolean {
   const className = (el.className || "").toString().toLowerCase();
   const id = (el.id || "").toLowerCase();
   const src = el.getAttribute("src") || "";
@@ -47,8 +47,7 @@ function isEquationElement(el: Element): boolean {
     className.includes("katex") ||
     className.includes("mathjax") ||
     className.includes("omml") ||
-    className.includes("mml") ||
-    className.includes("kix-")
+    className.includes("mml")
   ) {
     return true;
   }
@@ -77,7 +76,7 @@ function isEquationElement(el: Element): boolean {
 
   // Check closest ancestor
   try {
-    const ancestor = el.closest('[class*="equation" i], [class*="formula" i], [class*="math" i], [class*="latex" i], [class*="kix-" i]');
+    const ancestor = el.closest('[class*="equation" i], [class*="formula" i], [class*="math" i], [class*="latex" i]');
     if (ancestor) return true;
   } catch {
     // CSS selector not supported, skip
@@ -91,14 +90,16 @@ function isMathElement(el: Element): boolean {
 }
 
 function child(el: Element, tag: string): Element | null {
+  const lowerTag = tag.toLowerCase();
   for (const c of Array.from(el.children)) {
-    if (localName(c) === tag) return c;
+    if (localName(c) === lowerTag) return c;
   }
   return null;
 }
 
 function children(el: Element, tag: string): Element[] {
-  return Array.from(el.children).filter((c) => localName(c) === tag);
+  const lowerTag = tag.toLowerCase();
+  return Array.from(el.children).filter((c) => localName(c) === lowerTag);
 }
 
 function escapeBraces(text: string): string {
@@ -300,6 +301,18 @@ function ommlToLatex(el: Element): string {
       return `\\begin{cases}${rows.join(" \\\\ ")}\\end{cases}`;
     }
 
+    case "borderbox":
+    case "box": {
+      const e = child(el, "e");
+      const inner = e ? ommlToLatex(e) : "";
+      return `\\boxed{${inner}}`;
+    }
+
+    case "phant": {
+      const e = child(el, "e");
+      return e ? ommlToLatex(e) : "";
+    }
+
     default:
       if (PROP_TAGS.has(tag)) return "";
       return mapChildren(el);
@@ -340,7 +353,7 @@ function mathElementToLatex(el: Element): string {
 // Unicode math symbols/letters along the way.
 // ---------------------------------------------------------------------
 
-const MATH_FONT_REGEX =
+const _MATH_FONT_REGEX =
   /cambria\s*math|stix|asana\s*math|latin\s*modern\s*math|xits\s*math|lucida\s*bright\s*math/i;
 
 const UNICODE_MATH_LETTER_RANGES: Array<[number, number, number]> = [
@@ -350,7 +363,7 @@ const UNICODE_MATH_LETTER_RANGES: Array<[number, number, number]> = [
   [0x1d41a, 0x1d433, 0x1d41a - 97], // Mathematical Bold Small a-z
 ];
 
-function normalizeUnicodeMathLetters(text: string): string {
+function _normalizeUnicodeMathLetters(text: string): string {
   return Array.from(text)
     .map((ch) => {
       const cp = ch.codePointAt(0);
@@ -367,24 +380,104 @@ const SYMBOL_MAP: Array<[RegExp, string]> = [
   [/×/g, "\\times "],
   [/÷/g, "\\div "],
   [/→/g, "\\to "],
+  [/←/g, "\\leftarrow "],
+  [/⇒/g, "\\Rightarrow "],
+  [/⇔/g, "\\Leftrightarrow "],
+  [/↔/g, "\\leftrightarrow "],
   [/≤/g, "\\le "],
   [/≥/g, "\\ge "],
   [/≠/g, "\\ne "],
   [/±/g, "\\pm "],
+  [/∓/g, "\\mp "],
+  [/≈/g, "\\approx "],
+  [/≡/g, "\\equiv "],
+  [/∝/g, "\\propto "],
   [/√/g, "\\sqrt{}"],
   [/∛/g, "\\sqrt[3]{}"], // Cube root
+  [/∜/g, "\\sqrt[4]{}"], // Fourth root
   [/π/g, "\\pi "],
   [/θ/g, "\\theta "],
+  [/α/g, "\\alpha "],
+  [/β/g, "\\beta "],
+  [/γ/g, "\\gamma "],
+  [/δ/g, "\\delta "],
+  [/ε/g, "\\epsilon "],
+  [/ζ/g, "\\zeta "],
+  [/η/g, "\\eta "],
+  [/ι/g, "\\iota "],
+  [/κ/g, "\\kappa "],
+  [/λ/g, "\\lambda "],
+  [/μ/g, "\\mu "],
+  [/nu/g, "\\nu "],
+  [/ξ/g, "\\xi "],
+  [/ρ/g, "\\rho "],
+  [/σ/g, "\\sigma "],
+  [/τ/g, "\\tau "],
+  [/υ/g, "\\upsilon "],
+  [/ϕ/g, "\\phi "],
+  [/χ/g, "\\chi "],
+  [/ψ/g, "\\psi "],
+  [/ω/g, "\\omega "],
+  [/Γ/g, "\\Gamma "],
+  [/Δ/g, "\\Delta "],
+  [/Θ/g, "\\Theta "],
+  [/Λ/g, "\\Lambda "],
+  [/Ξ/g, "\\Xi "],
+  [/Π/g, "\\Pi "],
+  [/Σ/g, "\\Sigma "],
+  [/Υ/g, "\\Upsilon "],
+  [/Φ/g, "\\Phi "],
+  [/Ψ/g, "\\Psi "],
   [/Ω/g, "\\Omega "],
   [/∞/g, "\\infty "],
+  [/∫/g, "\\int "],
+  [/∬/g, "\\iint "],
+  [/∭/g, "\\iiint "],
+  [/∮/g, "\\oint "],
+  [/∑/g, "\\sum "],
+  [/∏/g, "\\prod "],
+  [/∈/g, "\\in "],
+  [/∉/g, "\\notin "],
+  [/⊂/g, "\\subset "],
+  [/⊆/g, "\\subseteq "],
+  [/∪/g, "\\cup "],
+  [/∩/g, "\\cap "],
+  [/∀/g, "\\forall "],
+  [/∃/g, "\\exists "],
+  [/∇/g, "\\nabla "],
+  [/°/g, "^\\circ "],
+  [/…/g, "\\dots "],
   [/·/g, "\\cdot "],
   [/²/g, "^{2}"],
   [/³/g, "^{3}"],
-  [/∙/g, "\\cdot "], // U+22C5 DOT OPERATOR
-  [/⋅/g, "\\cdot "], // U+00B7 MIDDLE DOT
+  [/¹/g, "^{1}"],
+  [/⁴/g, "^{4}"],
+  [/⁵/g, "^{5}"],
+  [/⁶/g, "^{6}"],
+  [/⁷/g, "^{7}"],
+  [/⁸/g, "^{8}"],
+  [/⁹/g, "^{9}"],
+  [/⁰/g, "^{0}"],
+  [/⁻/g, "^{-}"],
+  [/⁺/g, "^{+}"],
+  [/₀/g, "_{0}"],
+  [/₁/g, "_{1}"],
+  [/₂/g, "_{2}"],
+  [/₃/g, "_{3}"],
+  [/₄/g, "_{4}"],
+  [/₅/g, "_{5}"],
+  [/₆/g, "_{6}"],
+  [/₇/g, "_{7}"],
+  [/₈/g, "_{8}"],
+  [/₉/g, "_{9}"],
+  [/Å/g, "\\angstrom "],
+  [/ℏ/g, "\\hbar "],
+  [/⇌/g, "\\rightleftharpoons "],
+  [/∙/g, "\\cdot "],
+  [/⋅/g, "\\cdot "],
 ];
 
-function applySymbolMap(text: string): string {
+function _applySymbolMap(text: string): string {
   let out = text;
   for (const [re, replacement] of SYMBOL_MAP) out = out.replace(re, replacement);
   return out;
@@ -396,213 +489,132 @@ function getFontFamily(el: Element): string | null {
   return match ? match[1] : null;
 }
 
-function isMathFontElement(el: Element): boolean {
+function _isMathFontElement(el: Element): boolean {
   if (el.tagName !== "SPAN") return false;
   const font = getFontFamily(el);
-  return !!font && MATH_FONT_REGEX.test(font);
+  return !!font && _MATH_FONT_REGEX.test(font);
 }
-
-// New helper function: Determines if a node is a math-like element or text
-function isNodeMathLike(node: Node): boolean {
-  if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? "";
-    // Consider any non-empty text as potentially math-like if it's within a math context
-    // or contains numbers/letters/common math symbols.
-    return text.trim().length > 0;
-  }
-  if (node.nodeType !== Node.ELEMENT_NODE) return false;
-  const el = node as Element;
-  const tag = el.tagName;
-
-  // Explicit math elements
-  if (isMathElement(el) || isEquationElement(el)) return true;
-
-  // Elements commonly used for math in plain HTML
-  if (['SUP', 'SUB', 'BR', 'IMG'].includes(tag)) return true;
-
-  // Spans styled with math fonts
-  if (isMathFontElement(el) || el.querySelector('[style*="font-family: Cambria Math"]')) return true;
-
-  // Heuristic: if it's an inline element, assume it could be part of a math run
-  // This is a bit aggressive but helps capture mixed content from Google Docs
-  if (!BLOCK_TAGS.has(tag.toLowerCase())) return true;
-
-  return false;
-}
-
-/** Recursively renders a node's contents as latex-ish text (handles sup/sub, symbols, images). */
-function renderNodeContentToLatex(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return normalizeUnicodeMathLetters(applySymbolMap(node.textContent ?? ""));
-  }
-  if (node.nodeType !== Node.ELEMENT_NODE) return "";
-  const el = node as Element;
-  const tag = el.tagName;
-
-  // Handle specific tags directly
-  if (tag === "SUP") return `^{${Array.from(el.childNodes).map(renderNodeContentToLatex).join("")}}`;
-  if (tag === "SUB") return `_{${Array.from(el.childNodes).map(renderNodeContentToLatex).join("")}}`;
-  if (tag === "BR") return " ";
-
-  // If it's an image that represents an equation
-  if (tag === "IMG") {
-    const src = el.getAttribute("src") || "";
-    const alt = (el.getAttribute("alt") || "").trim();
-    const title = (el.getAttribute("title") || "").trim();
-    const dataLatex = el.getAttribute("data-latex") || "";
-    const ariaLabel = (el.getAttribute("aria-label") || "").trim();
-
-    let latex = dataLatex;
-    if (!latex && src.includes("cht=tx")) {
-      const match = src.match(/[?&]chl=([^&]+)/);
-      if (match) latex = decodeURIComponent(match[1]);
-    }
-    if (!latex && (isEquationElement(el) || isMathExpressionText(alt || ariaLabel || title))) {
-      latex = alt || ariaLabel || title;
-    }
-    if (latex) return latex;
-  }
-
-  // For other elements (like SPANs, DIVs, etc.), recursively process children
-  // This will catch math-font spans and their children
-  return Array.from(el.childNodes).map(renderNodeContentToLatex).join("");
-}
-
-
-
-
 
 const BLOCK_TAGS = new Set([
   "p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
   "table", "ul", "ol", "section", "header", "footer", "article",
 ]);
 
-function clipboardMathToLatexText(html: string, plainText: string = ""): string | null {
-  let doc: Document;
-  try {
-    doc = new DOMParser().parseFromString(html, "text/html");
-  } catch {
-    return null;
+function extractMathFromHtmlElement(el: Element): string | null {
+  let result: string | null = null;
+
+  if (isMathElement(el)) {
+    result = mathElementToLatex(el);
+  } else {
+    // Check data-mathml attribute
+    const dataMathml = el.getAttribute("data-mathml");
+    if (dataMathml) {
+      result = convertMathMLToLatex(dataMathml);
+    } else {
+      // Check data-latex, data-tex, or data-math attribute
+      const dataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || el.getAttribute("data-math");
+      if (dataLatex && dataLatex.trim()) {
+        result = dataLatex.trim();
+      } else {
+        // Check for KaTeX/MathJax TeX annotation
+        const annotation = el.querySelector("annotation[encoding*='tex'], annotation[encoding*='TeX']");
+        if (annotation && annotation.textContent?.trim()) {
+          result = annotation.textContent.trim();
+        } else {
+          // Check for Google Docs equation element or role="math"
+          const role = el.getAttribute("role") || "";
+          const className = (el.className || "").toString().toLowerCase();
+          if (role === "math" || className.includes("kix-equation") || className.includes("math-equation")) {
+            const ariaLabel = el.getAttribute("aria-label") || el.getAttribute("title") || "";
+            if (ariaLabel && ariaLabel.trim()) {
+              result = ariaLabel.trim();
+            }
+          } else if (el.tagName.toLowerCase() === "img") {
+            const alt = el.getAttribute("alt") || el.getAttribute("aria-label") || "";
+            const imgDataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || "";
+            if (imgDataLatex) {
+              result = imgDataLatex.trim();
+            } else if (alt.startsWith("\\") || alt.includes("=") || alt.includes("^") || alt.includes("_") || isMathExpressionText(alt)) {
+              result = alt.trim();
+            }
+          } else {
+            const font = getFontFamily(el);
+            if (font && _MATH_FONT_REGEX.test(font)) {
+              const text = el.textContent || "";
+              if (text.trim()) result = text.trim();
+            }
+          }
+        }
+      }
+    }
   }
 
-  let foundMath = false;
-  const out: string[] = [];
-  let currentMathRun: string[] = []; // Collects parts of a single math expression
-
-  const finalizeMathRun = () => {
-    if (currentMathRun.length > 0) {
-      let finalLatex = currentMathRun.join("").trim();
-      if (finalLatex) {
-        // Simple fraction detection: look for a single '/' or '⁄'
-        const fracParts = finalLatex.split(/(\/|⁄)/);
-        if (fracParts.length === 3 && fracParts[1] && fracParts[0].trim() && fracParts[2].trim()) {
-          const numerator = fracParts[0].trim();
-          const denominator = fracParts[2].trim();
-          finalLatex = `\\frac{${numerator}}{${denominator}}`;
-        }
-        out.push(`{{${finalLatex}}}`);
-        foundMath = true;
-      }
-      currentMathRun = []; // Reset for next math run
+  if (result) {
+    const cleaned = result.replace(/^\{\{\s*/, "").replace(/\s*\}\}$/, "").trim();
+    if (!isMathElement(el) && containsProseWords(cleaned)) {
+      return null;
     }
-  };
+    return cleaned;
+  }
 
-  const walk = (node: Node) => {
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      if (isNodeMathLike(node)) {
-        const latexPart = renderNodeContentToLatex(node);
-        if (latexPart) {
-          currentMathRun.push(latexPart);
+  return null;
+}
+
+function clipboardMathToLatexText(html: string, _plainText: string = ""): string | null {
+  if (html) {
+    let doc: Document | null = null;
+    try {
+      doc = new DOMParser().parseFromString(html, "text/html");
+    } catch {
+      doc = null;
+    }
+
+    if (doc && doc.body) {
+      const out: string[] = [];
+
+      const walk = (node: Node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node as Element;
+          const tag = el.tagName.toLowerCase();
+          if (tag === "br") {
+            if (out.length > 0 && out[out.length - 1] !== "\n") out.push("\n");
+            return;
+          }
+          const extractedLatex = extractMathFromHtmlElement(el);
+          if (extractedLatex) {
+            out.push(`{{${extractedLatex.trim()}}}`);
+            return;
+          }
+          if (BLOCK_TAGS.has(tag)) {
+            if (out.length > 0 && out[out.length - 1] !== "\n") out.push("\n");
+            for (const child of Array.from(node.childNodes)) walk(child);
+            if (out.length > 0 && out[out.length - 1] !== "\n") out.push("\n");
+            return;
+          }
+          for (const child of Array.from(node.childNodes)) walk(child);
+          return;
         }
-      } else {
-        finalizeMathRun();
         if (node.nodeType === Node.TEXT_NODE) {
           out.push(node.textContent ?? "");
+          return;
         }
-      }
-      return;
-    }
+      };
 
-    const el = node as Element;
+      walk(doc.body);
+      const combined = out.join("");
+      if (combined.trim()) {
+        return autoDetectMathInText(combined);
+      }
+    }
+  }
 
-    // Check class names to skip duplicate visual containers (KaTeX/MathJax HTML)
-    const className = el.className || "";
-    if (typeof className === "string") {
-      const lowerClass = className.toLowerCase();
-      if (
-        lowerClass.includes("katex-html") ||
-        lowerClass.includes("mjx-chtml") ||
-        lowerClass.includes("mjx-svg") ||
-        lowerClass.includes("mjx-assistive-mml")
-      ) {
-        return; // Skip duplicate or visual rendering
-      }
-    }
+  // Fallback for plain text
+  const textToProcess = _plainText || "";
+  if (textToProcess.trim()) {
+    return autoDetectMathInText(textToProcess);
+  }
 
-    // If it's a MathML or OMML element, treat it as a complete math block
-    if (node.nodeType === Node.ELEMENT_NODE && isMathElement(node as Element)) {
-      finalizeMathRun(); // Finalize any preceding math run
-      let latex = mathElementToLatex(node as Element);
-      if (!latex && plainText) {
-        // Fallback for things like Google Docs images where latex is in alt text
-        latex = plainText;
-      }
-      if (latex) { // MathML/OMML is usually a complete expression
-        out.push(`{{${latex.trim()}}}`);
-        foundMath = true;
-      }
-      return;
-    }
-
-    const tag = el.tagName.toLowerCase();
-    if (tag === "br") {
-      out.push("\n");
-      return;
-    }
-    if (tag === "img") {
-      // Image elements are handled by isNodeMathLike and renderNodeContentToLatex
-      // so we don't need special handling here, just let the general logic apply.
-    }
-
-    // If it's a block-level element, finalize current math run and add newline
-    if (node.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((node as Element).tagName.toLowerCase())) {
-      finalizeMathRun();
-      if (out.length > 0 && out[out.length - 1] !== "\n") {
-      out.push("\n");
-    }
-      // Recursively walk children of block tags
-      for (const child of Array.from(node.childNodes)) {
-        walk(child);
-      }
-      if (out.length > 0 && out[out.length - 1] !== "\n") {
-        out.push("\n");
-      }
-      return;
-    }
-
-    // Check if the current node is math-like
-    if (isNodeMathLike(node)) {
-      const latexPart = renderNodeContentToLatex(node);
-      if (latexPart) {
-        currentMathRun.push(latexPart);
-      }
-    } else {
-      // If not math-like, finalize current math run
-      finalizeMathRun();
-      // Since it's not math-like, and we've already handled non-element nodes
-      // at the top of the walk function, we can assume this is an element
-      // whose children should be walked.
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        for (const child of Array.from(node.childNodes)) {
-          walk(child);
-        }
-      }
-    }
-  };
-
-  walk(doc.body);
-  finalizeMathRun(); // Finalize any remaining math run at the end of the document
-  return foundMath ? out.join("").trim() : null;
+  return null;
 }
 
 export function convertMathMLToLatex(xmlStr: string): string | null {

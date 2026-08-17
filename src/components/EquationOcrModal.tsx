@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createWorker } from "tesseract.js";
 import { latexToMathML } from "./MathParser";
 import Modal from "./Modal";
 
@@ -114,6 +113,7 @@ export default function EquationOcrModal({
     setOcrText("");
 
     try {
+      const { createWorker } = await import("tesseract.js");
       const worker = await createWorker("eng");
       
       setStatus("Analyzing image and extracting characters...");

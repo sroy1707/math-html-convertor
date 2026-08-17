@@ -500,10 +500,31 @@ export default function RichTextEditor({
 
   // Custom Inline HTML insertion at cursor
   const insertHtmlAtCursor = (html: string) => {
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
+    if (!editorRef.current) return;
+    editorRef.current.focus();
 
-    const range = selection.getRangeAt(0);
+    const selection = window.getSelection();
+    let range: Range | null = null;
+
+    if (selection && selection.rangeCount > 0) {
+      range = selection.getRangeAt(0);
+      if (!editorRef.current.contains(range.commonAncestorContainer)) {
+        range = null;
+      }
+    }
+
+    if (!range && savedRangeRef.current) {
+      if (editorRef.current.contains(savedRangeRef.current.commonAncestorContainer)) {
+        range = savedRangeRef.current.cloneRange();
+      }
+    }
+
+    if (!range) {
+      range = document.createRange();
+      range.selectNodeContents(editorRef.current);
+      range.collapse(false);
+    }
+
     range.deleteContents();
 
     const div = document.createElement("div");
@@ -523,10 +544,10 @@ export default function RichTextEditor({
       const newRange = range.cloneRange();
       newRange.setStartAfter(lastNode);
       newRange.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-
-      // Store new cursor position
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      }
       savedRangeRef.current = newRange.cloneRange();
     }
   };
@@ -534,11 +555,9 @@ export default function RichTextEditor({
   // Parse pasted plain-text that may contain {{latex}} notation
   // and convert it into editor-compatible HTML with rendered equations.
   const parsePastedLatexText = (text: string): string => {
-    // Split on real newlines to preserve line structure
-    const lines = text.split(/\r?\n/);
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
     const processLine = (line: string): string => {
-      // Match {{...}} patterns; use a non-greedy match
       const parts = line.split(/(\{\{[\s\S]*?\}\})/g);
       return parts
         .map((part) => {
@@ -549,7 +568,6 @@ export default function RichTextEditor({
             const escapedLatex = escapeHtml(latex);
             return `<span class="math-eq-container" data-latex="${escapedLatex}" contenteditable="false">${mathml}</span>`;
           }
-          // Escape HTML entities in plain text parts
           return part
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
@@ -558,112 +576,173 @@ export default function RichTextEditor({
         .join("");
     };
 
-    // Stack equations one-after-one on consecutive lines.
-    // Blank/whitespace-only lines are dropped so equations appear
-    // consecutively without empty paragraphs between them.
-    // Leading question numbers (e.g. "1." / "2)") are kept on the
-    // same line as their equation, e.g. "1. x² - 5x + 6 = 0".
+    if (lines.length === 1) {
+      return processLine(lines[0]);
+    }
+
     const htmlLines: string[] = [];
     for (const line of lines) {
-      if (!line.trim()) continue;
-
-      // Extract a leading number marker like "1.", "2)", "(3)", "a)" etc.
-      const numberMatch = line.match(/^\s*(\d+|\w)[.)]\s*(.+)$/);
+      const numberMatch = line.match(/^\s*([\d\u0966-\u096F]+|[\p{L}\u0900-\u097F])[.)]\s*(.+)$/u);
       if (numberMatch) {
         const numberLabel = `${numberMatch[1]}.`;
         const rest = numberMatch[2];
         const processed = processLine(rest);
-        htmlLines.push(
-          `<p>${numberLabel} ${processed || "<br>"}</p>`
-        );
+        htmlLines.push(`<p>${numberLabel} ${processed || "<br>"}</p>`);
         continue;
       }
 
       const processed = processLine(line);
-      const isEquationOnly = /^<span class="math-eq-container"/.test(processed.trim());
-      htmlLines.push(
-        `<p class="${isEquationOnly ? "math-eq-display" : ""}">${processed || "<br>"}</p>`
-      );
+      htmlLines.push(`<p>${processed || "<br>"}</p>`);
     }
 
     return htmlLines.join("");
   };
 
-  // Handle paste to intercept and process {{latex}} notation
+  // Convert text written in LaTeX Mode into rich visual HTML with rendered MathML equations
+  const parseLatexModeTextToHtml = (text: string): string => {
+    if (!text) return "";
+
+    // Auto-detect math if explicit {{...}} blocks are not present yet
+    const autoDetected = text.includes("{{") ? text : autoDetectMathInText(text);
+
+    const processContent = (input: string): string => {
+      return input.replace(/\{\{([\s\S]*?)\}\}/g, (_, latex) => {
+        try {
+          const trimmedLatex = latex.trim();
+          const mathml = latexToMathML(trimmedLatex);
+          const escapedLatex = escapeHtml(trimmedLatex);
+          return `<span class="math-eq-container" data-latex="${escapedLatex}" contenteditable="false">${mathml}</span>`;
+        } catch {
+          return `{{${latex}}}`;
+        }
+      });
+    };
+
+    if (/<[a-z][\s\S]*>/i.test(autoDetected)) {
+      return processContent(autoDetected);
+    }
+
+    return parsePastedLatexText(autoDetected);
+  };
+
+  // Sync content typed in LaTeX mode back into the visual editor DOM and update stats
+  const syncLatexToVisualEditor = (latexText: string) => {
+    if (!editorRef.current) return;
+    const parsedHtml = parseLatexModeTextToHtml(latexText);
+    editorRef.current.innerHTML = parsedHtml;
+
+    onContentChange(parsedHtml, latexText);
+
+    // Compute stats
+    const text = editorRef.current.innerText || "";
+    const cleanText = text.trim();
+    const chars = cleanText.length;
+    const words = cleanText === "" ? 0 : cleanText.split(/\s+/).length;
+    const readTime = Math.max(1, Math.ceil(words / 200));
+    onStatsChange?.({ words, chars, readTime });
+  };
+
+  const handleLatexTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setCleanLatexHtml(val);
+    syncLatexToVisualEditor(val);
+  };
+
+  // Handle paste to intercept and process equations, symbols, and formatting
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    // Math copied from Google Docs (MathML) or Microsoft Word (OMML)
-    // arrives in the "text/html" clipboard payload. Convert it to
-    // {{latex}} blocks and reuse the same rendering pipeline.
+    saveSelection();
+
     const html = e.clipboardData.getData("text/html");
     const plainText = e.clipboardData.getData("text/plain");
-    const allTypes = Array.from(e.clipboardData.types);
-    
-    console.group("=== PASTE DEBUG ===");
-    console.log("All MIME types:", allTypes);
-    console.log("Plain text:", plainText);
-    
-    if (html) { 
-      try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, "text/html");
-        const imgs = doc.querySelectorAll("img");
-        const mathEls = doc.querySelectorAll("math");
-        const spans = doc.querySelectorAll("span");
-        let cambriaMathSpans = 0;
-        spans.forEach(s => { if (/cambria\s*math/i.test(s.getAttribute("style") || "")) cambriaMathSpans++; });
-        console.log("img elements:", imgs.length);
-        imgs.forEach((img, i) => {
-          console.log(`  img[${i}]: src=${img.src.slice(0, 80)}, alt="${img.alt}", class="${img.className}"`);
-        });
-        console.log("<math> elements:", mathEls.length);
-        console.log("Cambria Math spans:", cambriaMathSpans);
-        console.log("HTML (first 1500 chars):", html.slice(0, 1500));
-      } catch (err) {
-        console.error("Parse error:", err);
-      }
-      
-      const mathText = clipboardMathToLatexText(html, plainText);
-      console.log("clipboardMathToLatexText result:", mathText);
-      console.groupEnd();
-      
-      if (mathText !== null) {
-        e.preventDefault();
-        const parsed = parsePastedLatexText(mathText);
-        restoreSelection();
-        document.execCommand("insertHTML", false, parsed);
-        updateStatsAndHTML();
-        if (editorRef.current) editorRef.current.focus();
-        return;
-      }
-    } else {
-      console.log("No HTML payload in clipboard.");
-      console.groupEnd();
-    }
-    
-    // Fallback for plain text: check for raw MathML or {{latex}} patterns
+
+    // ──── DEBUG LOGGING ─────────────────────────────────────────────────────
+    console.group("📋 PASTE DEBUG");
+    console.log("MIME types:", Array.from(e.clipboardData.types));
+    console.log("Plain text (first 500):", plainText.slice(0, 500));
+    console.log("HTML (first 1000):", html.slice(0, 1000));
+    // ────────────────────────────────────────────────────────────────────────
+
+    // Check for raw MathML string in plain text payload first
     const mathmlLatex = convertMathMLToLatex(plainText);
     if (mathmlLatex) {
+      console.log("✅ MathML detected in plainText, latex:", mathmlLatex);
+      console.groupEnd();
       e.preventDefault();
       const parsed = parsePastedLatexText(`{{${mathmlLatex}}}`);
-      restoreSelection();
-      document.execCommand("insertHTML", false, parsed);
+      insertHtmlAtCursor(parsed);
       updateStatsAndHTML();
-      if (editorRef.current) editorRef.current.focus();
       return;
     }
-    
-    const preprocessedText = autoDetectMathInText(plainText);
-    
-    // Only intercept if the pasted plain text contains {{...}} patterns
-    if (/\{\{[\s\S]*?\}\}/.test(preprocessedText)) {
+
+    // Process Google Docs / MS Word HTML or plain text payload
+    const mathText = clipboardMathToLatexText(html, plainText);
+    console.log("clipboardMathToLatexText result (first 500):", mathText?.slice(0, 500));
+    console.groupEnd();
+
+    if (mathText !== null && mathText.trim() !== "") {
       e.preventDefault();
-      const html = parsePastedLatexText(preprocessedText);
-      restoreSelection();
-      document.execCommand("insertHTML", false, html);
+      const parsed = parsePastedLatexText(mathText);
+      insertHtmlAtCursor(parsed);
       updateStatsAndHTML();
-      if (editorRef.current) editorRef.current.focus();
     }
-    // Otherwise let the browser handle the paste normally
+  };
+
+  // Handle copy: convert math-eq-container spans to proper <math> MathML for Google Docs / MS Word
+  const handleCopy = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+
+    const range = selection.getRangeAt(0);
+    const fragment = range.cloneContents();
+
+    // Create a temporary container to manipulate cloned DOM
+    const tempDiv = document.createElement("div");
+    tempDiv.appendChild(fragment);
+
+    // Build plain-text version (with LaTeX notation for equations)
+    let plainText = "";
+    const buildPlainText = (node: Node) => {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        if (el.classList && el.classList.contains("math-eq-container")) {
+          const latex = el.getAttribute("data-latex") || "";
+          plainText += `$${latex}$`;
+          return;
+        }
+        const tag = el.tagName.toLowerCase();
+        if (tag === "br" || tag === "p" || tag === "div") {
+          plainText += "\n";
+        }
+        Array.from(el.childNodes).forEach(buildPlainText);
+        if (tag === "p" || tag === "div") plainText += "\n";
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        plainText += node.textContent ?? "";
+      }
+    };
+    buildPlainText(tempDiv);
+
+    // Build HTML version: replace math-eq-container spans with proper <math> MathML
+    const mathSpans = tempDiv.querySelectorAll(".math-eq-container");
+    mathSpans.forEach((span) => {
+      const latex = span.getAttribute("data-latex") || "";
+      if (!latex) return;
+      try {
+        const mathml = latexToMathML(latex);
+        const wrapper = document.createElement("span");
+        wrapper.innerHTML = mathml;
+        span.parentNode?.replaceChild(wrapper, span);
+      } catch {
+        // Fallback: keep LaTeX inline text
+        const text = document.createTextNode(`$${latex}$`);
+        span.parentNode?.replaceChild(text, span);
+      }
+    });
+
+    const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>${tempDiv.innerHTML}</body></html>`;
+
+    e.preventDefault();
+    e.clipboardData.setData("text/html", htmlContent);
+    e.clipboardData.setData("text/plain", plainText.trim());
   };
 
   // Open math modal
@@ -674,16 +753,26 @@ export default function RichTextEditor({
     setIsMathModalOpen(true);
   };
 
-  // Intercept click on formula inside editor to edit it
-  const handleEditorDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Intercept single-click on formula inside editor to edit it
+  const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const mathContainer = target.closest(".math-eq-container") as HTMLElement | null;
     if (mathContainer) {
-      e.preventDefault(); // Prevent text selection on double-click
+      e.preventDefault();
+      e.stopPropagation();
       const latexVal = mathContainer.getAttribute("data-latex") || "";
       setEditingMathElement(mathContainer);
       setMathInitialLatex(latexVal);
       setIsMathModalOpen(true);
+    }
+  };
+
+  // Intercept double-click on formula inside editor to edit it (keep for backward compat)
+  const handleEditorDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const mathContainer = target.closest(".math-eq-container") as HTMLElement | null;
+    if (mathContainer) {
+      e.preventDefault();
     }
   };
 
@@ -704,7 +793,21 @@ export default function RichTextEditor({
   };
 
   const handleShowLatex = () => {
-    setShowLatexView(prev => !prev);
+    setShowLatexView((prev) => {
+      const nextState = !prev;
+      if (!nextState) {
+        // Switching back from LaTeX view to Visual view
+        syncLatexToVisualEditor(cleanLatexHtml);
+      } else {
+        // Switching to LaTeX view
+        if (editorRef.current) {
+          const content = editorRef.current.innerHTML;
+          const cleanLatex = getCleanLatexHtml(content);
+          setCleanLatexHtml(cleanLatex);
+        }
+      }
+      return nextState;
+    });
   };
 
   const toggleFullscreen = () => {
@@ -787,24 +890,29 @@ export default function RichTextEditor({
                 display: showLatexView ? "block" : "none",
               }}
             >
-              <pre
+              <textarea
+                value={cleanLatexHtml}
+                onChange={handleLatexTextareaChange}
+                placeholder="Type or paste text and formulas directly (e.g. {{x^2 + y^2 = z^2}} or \frac{a}{b} = 2)..."
                 style={{
                   margin: 0,
+                  width: "100%",
                   height: "100%",
-                  overflowY: "auto",
+                  minHeight: "400px",
+                  outline: "none",
+                  border: "none",
+                  resize: "none",
                   color: "#0f172a",
-                  fontSize: "0.9rem",
-                  fontFamily: "Courier New, Courier, monospace",
+                  fontSize: "0.95rem",
+                  fontFamily: "Consolas, Monaco, 'Courier New', monospace",
                   whiteSpace: "pre-wrap",
-                  wordBreak: "break-all",
+                  wordBreak: "break-word",
                   lineHeight: "1.6",
                   padding: "1.5em",
                   boxSizing: "border-box",
-                  background: "#fff"
+                  background: "#fff",
                 }}
-              >
-                {cleanLatexHtml}
-              </pre>
+              />
             </div>
 
             {/* Visual Editor View */}
@@ -817,6 +925,8 @@ export default function RichTextEditor({
               onSelect={checkSelectionFormats}
               onKeyUp={checkSelectionFormats}
               onMouseUp={checkSelectionFormats}
+              onClick={handleEditorClick}
+              onCopy={handleCopy}
               onDoubleClick={handleEditorDoubleClick}
               onKeyDown={handleEditorKeyDown}
               onPaste={handlePaste}

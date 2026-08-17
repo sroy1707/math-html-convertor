@@ -159,7 +159,7 @@ class Parser {
     if (token.type === "COMMAND") {
       const cmd = token.value;
 
-      if (cmd === "\\frac") {
+      if (cmd === "\\frac" || cmd === "\\fract" || cmd === "\\fraction" || cmd === "\\dfrac" || cmd === "\\tfrac" || cmd === "\\cfrac") {
         const num = this.parseGroupOrPrimary();
         const den = this.parseGroupOrPrimary();
         return `<mfrac>${num}${den}</mfrac>`;
@@ -174,7 +174,7 @@ class Parser {
         return `<mrow><mtext>ChemFig</mtext><mo>(</mo>${content}<mo>)</mo></mrow>`;
       }
 
-      if (cmd === "\\sqrt") {
+      if (cmd === "\\sqrt" || cmd === "\\sqr") {
         if (this.peek().type === "INDEX_START") {
           this.consume();
           const indexExpr = this.parseExpression();
@@ -243,6 +243,35 @@ class Parser {
           return `<mo>${dval === "<" ? "&lt;" : dval === ">" ? "&gt;" : dval}</mo>`;
         }
         return "";
+      }
+
+      if (cmd === "\\boxed") {
+        const content = this.parseGroupOrPrimary();
+        return `<mrow style="border: 1px solid currentColor; padding: 2px 4px; display: inline-block;">${content}</mrow>`;
+      }
+
+      if (cmd === "\\ce") {
+        const content = this.parseGroupOrPrimary();
+        return `<mrow>${content}</mrow>`;
+      }
+
+      if (cmd === "\\mathrm" || cmd === "\\mbox" || cmd === "\\operatorname" || cmd === "\\textbf" || cmd === "\\textit") {
+        const content = this.parseGroupOrPrimary();
+        const stripped = content.replace(/<[^>]*>/g, "");
+        return `<mtext>${stripped}</mtext>`;
+      }
+
+      if (cmd === "\\mathring") {
+        const content = this.parseGroupOrPrimary();
+        return `<mover>${content}<mo>&#x030A;</mo></mover>`;
+      }
+
+      if (cmd === "\\angstrom") {
+        return `<mi>&#x212B;</mi>`;
+      }
+
+      if (cmd === "\\degree") {
+        return `<mo>&#x00B0;</mo>`;
       }
 
       if (cmd === "\\xrightarrow") {
