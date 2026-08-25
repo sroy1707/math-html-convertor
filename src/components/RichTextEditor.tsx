@@ -558,22 +558,59 @@ export default function RichTextEditor({
     const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
     const processLine = (line: string): string => {
-      const parts = line.split(/(\{\{[\s\S]*?\}\})/g);
-      return parts
-        .map((part) => {
-          const match = part.match(/^\{\{([\s\S]*?)\}\}$/);
-          if (match) {
-            const latex = match[1].trim();
-            const mathml = latexToMathML(latex);
-            const escapedLatex = escapeHtml(latex);
-            return `<span class="math-eq-container" data-latex="${escapedLatex}" contenteditable="false">${mathml}</span>`;
+      let position = 0;
+      let resultHtml = "";
+
+      while (position < line.length) {
+        const start = line.indexOf("{{", position);
+        if (start === -1) {
+          resultHtml += escapeHtml(line.slice(position));
+          break;
+        }
+
+        if (start > position) {
+          resultHtml += escapeHtml(line.slice(position, start));
+        }
+
+        // Find closing }} using brace-depth counting
+        let end = -1;
+        let braceDepth = 0;
+        let p = start + 2;
+
+        while (p < line.length) {
+          const char = line[p];
+          const prevChar = p > 0 ? line[p - 1] : "";
+          const isEscaped = prevChar === "\\" && (p < 2 || line[p - 2] !== "\\");
+
+          if (!isEscaped) {
+            if (char === "{") {
+              braceDepth++;
+            } else if (char === "}") {
+              if (braceDepth > 0) {
+                braceDepth--;
+              } else if (p + 1 < line.length && line[p + 1] === "}") {
+                end = p;
+                break;
+              }
+            }
           }
-          return part
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-        })
-        .join("");
+          p++;
+        }
+
+        if (end === -1) {
+          resultHtml += escapeHtml(line.slice(start));
+          break;
+        }
+
+        const latex = line.slice(start + 2, end).trim();
+        const mathml = latexToMathML(latex);
+        const escapedLatex = escapeHtml(latex);
+        resultHtml += `<span class="math-eq-container" data-latex="${escapedLatex}" contenteditable="false">${mathml}</span>`;
+
+        position = end + 2;
+      }
+
+      return resultHtml;
     };
 
     if (lines.length === 1) {
