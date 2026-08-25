@@ -336,7 +336,10 @@ function mathElementToLatex(el: Element): string {
     if (isMathMl(el)) {
       const annotation = extractTexAnnotation(el);
       if (annotation) return annotation;
-      let latex = MathMLToLaTeX.convert(el.outerHTML);
+      const xmlString = el.outerHTML
+        .replace(/<(\/?)mml:/gi, "<$1")
+        .replace(/xmlns:mml="[^"]*"/gi, "");
+      let latex = MathMLToLaTeX.convert(xmlString);
       if (!latex.trim()) latex = (el.textContent || "").trim();
       return latex;
     }
@@ -506,42 +509,58 @@ function extractMathFromHtmlElement(el: Element): string | null {
   if (isMathElement(el)) {
     result = mathElementToLatex(el);
   } else {
-    // Check data-mathml attribute
-    const dataMathml = el.getAttribute("data-mathml");
-    if (dataMathml) {
-      result = convertMathMLToLatex(dataMathml);
+    const tagName = el.tagName.toLowerCase();
+    if (tagName === "img") {
+      const src = el.getAttribute("src") || "";
+      if (src.includes("chart?cht=tx") || src.includes("cht=tx")) {
+        const match = src.match(/[?&]chl=([^&]+)/);
+        if (match) {
+          try {
+            const decoded = decodeURIComponent(match[1].replace(/\+/g, " "));
+            if (decoded.trim()) return decoded.trim();
+          } catch {
+            // ignore URI decode error
+          }
+        }
+      }
+      const alt = el.getAttribute("alt") || el.getAttribute("aria-label") || el.getAttribute("title") || "";
+      const imgDataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || "";
+      if (imgDataLatex) {
+        result = imgDataLatex.trim();
+      } else if (alt.startsWith("\\") || alt.includes("=") || alt.includes("^") || alt.includes("_") || isMathExpressionText(alt)) {
+        result = alt.trim();
+      }
     } else {
-      // Check data-latex, data-tex, or data-math attribute
-      const dataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || el.getAttribute("data-math");
-      if (dataLatex && dataLatex.trim()) {
-        result = dataLatex.trim();
+      const dataMathml = el.getAttribute("data-mathml");
+      if (dataMathml) {
+        result = convertMathMLToLatex(dataMathml);
       } else {
-        // Check for KaTeX/MathJax TeX annotation
-        const annotation = el.querySelector("annotation[encoding*='tex'], annotation[encoding*='TeX']");
-        if (annotation && annotation.textContent?.trim()) {
-          result = annotation.textContent.trim();
+        const dataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || el.getAttribute("data-math");
+        if (dataLatex && dataLatex.trim()) {
+          result = dataLatex.trim();
         } else {
-          // Check for Google Docs equation element or role="math"
-          const role = el.getAttribute("role") || "";
-          const className = (el.className || "").toString().toLowerCase();
-          if (role === "math" || className.includes("kix-equation") || className.includes("math-equation")) {
-            const ariaLabel = el.getAttribute("aria-label") || el.getAttribute("title") || "";
-            if (ariaLabel && ariaLabel.trim()) {
-              result = ariaLabel.trim();
-            }
-          } else if (el.tagName.toLowerCase() === "img") {
-            const alt = el.getAttribute("alt") || el.getAttribute("aria-label") || "";
-            const imgDataLatex = el.getAttribute("data-latex") || el.getAttribute("data-tex") || "";
-            if (imgDataLatex) {
-              result = imgDataLatex.trim();
-            } else if (alt.startsWith("\\") || alt.includes("=") || alt.includes("^") || alt.includes("_") || isMathExpressionText(alt)) {
-              result = alt.trim();
-            }
+          const annotation = el.querySelector("annotation[encoding*='tex'], annotation[encoding*='TeX']");
+          if (annotation && annotation.textContent?.trim()) {
+            result = annotation.textContent.trim();
           } else {
-            const font = getFontFamily(el);
-            if (font && _MATH_FONT_REGEX.test(font)) {
-              const text = el.textContent || "";
-              if (text.trim()) result = text.trim();
+            const role = el.getAttribute("role") || "";
+            const className = (el.className || "").toString().toLowerCase();
+            if (role === "math" || className.includes("kix-equation") || className.includes("math-equation") || className.includes("equation")) {
+              const ariaLabel = el.getAttribute("aria-label") || el.getAttribute("title") || "";
+              if (ariaLabel && ariaLabel.trim()) {
+                result = ariaLabel.trim();
+              } else {
+                const childImg = el.querySelector("img");
+                if (childImg) {
+                  return extractMathFromHtmlElement(childImg);
+                }
+              }
+            } else {
+              const font = getFontFamily(el);
+              if (font && _MATH_FONT_REGEX.test(font)) {
+                const text = el.textContent || "";
+                if (text.trim()) result = text.trim();
+              }
             }
           }
         }

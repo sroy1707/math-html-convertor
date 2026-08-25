@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# equawrite
 
-## Getting Started
+A React rich text editor and math converter library with built-in KaTeX formula rendering and MathML support.
 
-First, run the development server:
+## Installation
 
 ```bash
-npm run dev
+npm install equawrite katex
 # or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+yarn add equawrite katex
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Using `KatexRenderer`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+To render HTML strings containing math formulas enclosed in double curly braces (e.g. `{{ \sqrt{b^2 - 4ac} / 2a }}`), use `KatexRenderer`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```tsx
+import { KatexRenderer } from "equawrite";
 
-## Learn More
+export default function MyPage() {
+  const htmlContent = `<p>Quadratic formula: {{x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}}}</p>`;
 
-To learn more about Next.js, take a look at the following resources:
+  return <KatexRenderer content={htmlContent} />;
+}
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Exports
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `RichTextEditor`: Interactive rich text editor with math toolbars, OCR support, and MathML conversion.
+- `KatexRenderer`: Client-side KaTeX parser & renderer for HTML containing `{{ latex }}` formulas.
+- `latexToMathML`: Utility function to convert LaTeX strings directly into MathML string representation.
